@@ -1,46 +1,43 @@
 #!/usr/bin/env python3
 """
-Functions for web page handling
+This module contains a function for retrieving the content of a web page.
 """
 
 import requests
-import redis
-import functools
+import time
+from functools import wraps
 
-# Create a Redis client instance
-redis_client = redis.Redis()
+CACHE_EXPIRATION = 10  # seconds
+
 
 def track_calls_and_cache(url):
+    cache = {}
+
     def decorator(func):
-        @functools.wraps(func)
+        @wraps(func)
         def wrapper(*args, **kwargs):
-            # Track the number of times the URL is accessed
-            redis_client.incr(f"count:{url}")
-
-            # Check if the page content is already cached
-            cached_content = redis_client.get(f"{url}:content")
-            if cached_content:
-                return cached_content.decode('utf-8')
-
-            # Fetch the HTML content of the URL
-            response = requests.get(url)
-            content = response.text
-
-            # Cache the result with a 10-second expiration time
-            redis_client.setex(f"{url}:content", 10, content)
-
-            return content
-
+            if url in cache and time.time() - cache[url]["time"] < CACHE_EXPIRATION:
+                cache_hit = True
+                response = cache[url]["response"]
+            else:
+                cache_hit = False
+                response = func(*args, **kwargs)
+                cache[url] = {"response": response, "time": time.time()}
+            count_key = f"count:{url}"
+            if count_key in cache:
+                cache[count_key] += 1
+            else:
+                cache[count_key] = 1
+            return response, cache_hit
         return wrapper
-
     return decorator
 
-@track_calls_and_cache("http://slowwly.robertomurray.co.uk/delay/1000/url/https://www.example.com")
-def get_page(url: str) -> str:
-    """
-    Fetches the HTML content of a URL, tracks the number of times it is accessed,
-    and caches the result with a 10-second expiration time.
-    """
-    response = requests.get(url)
-    return response.text
 
+@track_calls_and_cache("https://www.example.com")
+def get_page(url):
+    response = requests.get(url)
+    return response.content.decode("utf-8")
+
+
+if __name__ == "__main__":
+    print(get_page("https://www.example.com"))
