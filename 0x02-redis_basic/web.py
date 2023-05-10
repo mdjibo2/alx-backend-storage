@@ -7,45 +7,39 @@ import requests
 import redis
 import functools
 
+# Create a Redis client instance
+redis_client = redis.Redis()
 
-# Connect to Redis
-REDIS = redis.Redis()
+def track_calls_and_cache(url):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # Track the number of times the URL is accessed
+            redis_client.incr(f"count:{url}")
 
+            # Check if the page content is already cached
+            cached_content = redis_client.get(f"{url}:content")
+            if cached_content:
+                return cached_content.decode('utf-8')
 
-# Define decorator to cache and count calls
-def cache_count_calls(func):
-    @functools.wraps(func)
-    def wrapper(url):
-        """
-        Wrapper function to cache and count calls to the decorated function.
-        """
-        key = f'count:{url}'
-        count = REDIS.get(key)
-        if count is None:
-            count = 1
-        else:
-            count = int(count) + 1
-        REDIS.set(key, count, ex=10)
+            # Fetch the HTML content of the URL
+            response = requests.get(url)
+            content = response.text
 
-        # Check if response is already cached
-        html = REDIS.get(url)
-        if html is not None:
-            return html.decode('utf-8')
+            # Cache the result with a 10-second expiration time
+            redis_client.setex(f"{url}:content", 10, content)
 
-        # Fetch HTML and cache response
-        response = requests.get(url)
-        html = response.text
-        REDIS.set(url, html, ex=10)
-        return html
+            return content
 
-    return wrapper
+        return wrapper
 
+    return decorator
 
-# Decorate get_page with cache_count_calls
-@cache_count_calls
+@track_calls_and_cache("http://slowwly.robertomurray.co.uk/delay/1000/url/https://www.example.com")
 def get_page(url: str) -> str:
     """
-    Fetches the HTML content of a URL, caches it, and counts the number of calls.
+    Fetches the HTML content of a URL, tracks the number of times it is accessed,
+    and caches the result with a 10-second expiration time.
     """
     response = requests.get(url)
     return response.text
