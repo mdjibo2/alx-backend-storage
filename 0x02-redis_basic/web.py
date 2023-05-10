@@ -33,11 +33,11 @@ def track_calls_and_cache(url):
     return decorator
 
 
-@track_calls_and_cache("https://www.example.com")
+@track_calls_and_cache("http://slowwly.robertomurray.co.uk")
 def get_page(url):
     response = requests.get(url)
     return response.content.decode("utf-8")
 
 
 if __name__ == "__main__":
-    print(get_page("https://www.example.com"))
+    print(get_page("http://slowwly.robertomurray.co.uk"))
