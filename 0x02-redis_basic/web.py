@@ -1,43 +1,21 @@
 #!/usr/bin/env python3
-"""
-This module contains a function for retrieving the content of a web page.
-"""
-
+""" obtain the HTML content of a particular URL and returns it """
+import redis
 import requests
-import time
-from functools import wraps
-
-CACHE_EXPIRATION = 10  # seconds
+r = redis.Redis()
+count = 0
 
 
-def track_calls_and_cache(url):
-    cache = {}
-
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            if url in cache and time.time() - cache[url]["time"] < CACHE_EXPIRATION:
-                cache_hit = True
-                response = cache[url]["response"]
-            else:
-                cache_hit = False
-                response = func(*args, **kwargs)
-                cache[url] = {"response": response, "time": time.time()}
-            count_key = f"count:{url}"
-            if count_key in cache:
-                cache[count_key] += 1
-            else:
-                cache[count_key] = 1
-            return response, cache_hit
-        return wrapper
-    return decorator
-
-
-@track_calls_and_cache("http://slowwly.robertomurray.co.uk")
-def get_page(url):
-    response = requests.get(url)
-    return response.content.decode("utf-8")
+def get_page(url: str) -> str:
+    """ track how many times a URL was accessed in the key
+        "count:{url}"
+        and cache the result with an expiration time of 10 seconds """
+    r.set(f"cached:{url}", count)
+    resp = requests.get(url)
+    r.incr(f"count:{url}")
+    r.setex(f"cached:{url}", 10, r.get(f"cached:{url}"))
+    return resp.text
 
 
 if __name__ == "__main__":
-    print(get_page("http://slowwly.robertomurray.co.uk"))
+    get_page('http://slowwly.robertomurray.co.uk')

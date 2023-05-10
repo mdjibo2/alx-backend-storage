@@ -1,87 +1,89 @@
 #!/usr/bin/env python3
-""" Cache module
-"""
-
+""" Redis implementation """
+from typing import Union, Callable, Optional, Any
 import redis
 import uuid
-import functools
-from typing import Callable
-
-
-def count_calls(func: Callable) -> Callable:
-    """Decorator that counts how many times a function
-    has been called.
-    """
-    @functools.wraps(func)
-    def wrapper(self, *args, **kwargs):
-        key = func.__qualname__
-        self._redis.incr(key)
-        return func(self, *args, **kwargs)
-    return wrapper
+from functools import wraps
 
 
 def call_history(method: Callable) -> Callable:
-    """Decorator that stores the history of inputs and outputs
-    for a particular function.
-    """
-    @functools.wraps(method)
-    def wrapper(self, *args, **kwargs):
-        inputs_key = f"{method.__qualname__}:inputs"
-        outputs_key = f"{method.__qualname__}:outputs"
+    """ store the history of inputs and outputs """
+    key = method.__qualname__
+    inputs = key + ":inputs"
+    outputs = key + ":outputs"
 
-        input_str = str(args)
-        self._redis.rpush(inputs_key, input_str)
+    @wraps(method)
+    def wrapper(self, *args, **kwds):
+        """ wrapped function """
+        self._redis.rpush(inputs, str(args))
+        data = method(self, *args, **kwds)
+        self._redis.rpush(outputs, str(data))
+        return data
+    return wrapper
 
-        output = method(self, *args, **kwargs)
-        self._redis.rpush(outputs_key, output)
 
-        return output
+def count_calls(method: Callable) -> Callable:
+    """ count how many times methods of the Cache class are called """
+    key = method.__qualname__
+
+    @wraps(method)
+    def wrapper(self, *args, **kwds):
+        """ wrapped function """
+        self._redis.incr(key)
+        return method(self, *args, **kwds)
     return wrapper
 
 
 class Cache:
-    """ Cache class
-    """
+    """ Cache class """
     def __init__(self):
-        """ Constructor method
-        """
+        """ constructor """
         self._redis = redis.Redis()
         self._redis.flushdb()
 
-    @count_calls
     @call_history
-    def store(self, data: bytes) -> str:
-        """ Store data in Redis and return a unique id
-        """
+    @count_calls
+    def store(self, data: Union[str, bytes, int, float]) -> str:
+        """ generate a random key (e.g. using uuid) """
         key = str(uuid.uuid4())
         self._redis.set(key, data)
         return key
 
-    def get(self, key: str) -> bytes:
-        """ Get data from Redis by key
-        """
-        return self._redis.get(key)
+    def get(self, key: str,
+            fn: Optional[Callable] = None) -> Union[str, bytes, int, float]:
+        """ take a key string argument and an optional Callable argument named
+            fn. """
+        data = self._redis.get(key)
+        if fn:
+            return fn(data)
+        return data
 
     def get_str(self, key: str) -> str:
-        """ Get data from Redis by key as string
-        """
-        return self._redis.get(key).decode('utf-8')
+        """ Cache.get to str """
+        data = self._redis.get(key)
+        return data.decode("utf-8")
 
     def get_int(self, key: str) -> int:
-        """ Get data from Redis by key as integer
-        """
-        return int(self._redis.get(key).decode('utf-8'))
+        """ Cache.get to int """
+        data = self._redis.get(key)
+        try:
+            data = int(value.decode("utf-8"))
+        except Exception:
+            data = 0
+        return data
 
 
-def replay(fn: Callable):
-    """ Display the history of calls of a particular function
-    """
-    r = redis.Redis()
-    fn_name = fn.__qualname__
-    inputs = r.lrange(f"{fn_name}:inputs", 0, -1)
-    outputs = r.lrange(f"{fn_name}:outputs", 0, -1)
-    call_count = len(inputs)
-
-    print(f"{fn_name} was called {call_count} times:")
-    for i, o in zip(inputs, outputs):
-        print(f"{fn_name}{i.decode('utf-8')} -> {o.decode('utf-8')}")
+def replay(method: Callable):
+    """ display the history of calls of a function """
+    key = method.__qualname__
+    inputs = key + ":inputs"
+    outputs = key + ":outputs"
+    redis = method.__self__._redis
+    count = redis.get(key).decode("utf-8")
+    print("{} was called {} times:".format(key, count))
+    inputList = redis.lrange(inputs, 0, -1)
+    outputList = redis.lrange(outputs, 0, -1)
+    redis_zipped = list(zip(inputList, outputList))
+    for a, b in redis_zipped:
+        attr, data = a.decode("utf-8"), b.decode("utf-8")
+        print("{}(*{}) -> {}".format(key, attr, data))
